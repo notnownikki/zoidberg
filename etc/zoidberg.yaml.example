@@ -1,0 +1,26 @@
+- gerrits:
+  - review-gerrit:
+      host: 10.0.3.38
+      key_filename: /home/zoidberg/id_rsa_review
+      username: zoidberg
+      project-pattern: .*
+      events:
+      - type: comment-added
+        action: zoidberg.PropagateComment
+        target: third-party
+      - type: ref-updated
+        action: zoidberg.SyncBranch
+        branch-pattern: ^master$
+        target: third-party
+  - third-party:
+      host: 10.0.3.102
+      key_filename: /home/zoidberg/id_rsa_third_party
+      username: zoidberg
+      project-pattern: .*
+      events:
+      - type: comment-added
+        action: zoidberg.PropagateComment
+        target: review-gerrit
+      - type: patchset-created
+        action: zoidberg.SyncReviewCode
+        target: review-gerrit
