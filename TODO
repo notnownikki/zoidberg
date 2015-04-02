@@ -1,0 +1,4 @@
+reload config
+validate config on load
+make data safe for running in shell commands
+initial sync actions (e.g. sync branches when zoidberg starts up)
