@@ -52,6 +52,11 @@ for gerrit_name in config.gerrits:
     host = gerrit_config.get('host')
     key_filename = gerrit_config.get('key_filename')
     name = gerrit_config.get('name')
+    # verify actions are valid
+    for event_type in gerrit_config['events']:
+        for action in gerrit_config['events'][event_type]:
+            a = actions.ActionRegistry.get(action['action'])
+            a().validate_config(config, action)
     # connect client and store the connected client
     client = gerrit.GerritClient(
         username=username, host=host, key_filename=key_filename)
@@ -60,7 +65,6 @@ for gerrit_name in config.gerrits:
         (name, host, client.gerrit_version()))
     client.start_event_stream()
     gerrit_config['client'] = client
-    # TODO: verify actions are valid
 
 try:
     # event processing loop

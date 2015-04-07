@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import stat
+import subprocess
 
 
 class ActionRegistry(object):
@@ -54,13 +55,115 @@ class Action(object):
         self._do_run(event, cfg, action_cfg, source)
 
 
-@ActionRegistry.register('zoidberg.EchoComment')
-class EchoCommentAction(Action):
+class GitSshAction(Action):
+    """Common code to run git+ssh commands."""
+    def get_gerrit_credentials(self, source, target):
+        """Generate a dict with user/key/host/port details."""
+        data = {
+            'source-username': source['username'],
+            'source-host': source['host'],
+            'source-port': source['port'],
+            'target-username': target['username'],
+            'target-host': target['host'],
+            'target-port': target['port']
+        }
+        return data
+
+    def make_ssh_wrapper(self, gerrit):
+        filename = os.getcwd() + '/.tmp_ssh_' + gerrit['host']
+        f = open(filename, 'w')
+        f.write("""#!/bin/bash
+        ssh -i %s $@
+        """ % gerrit['key_filename'])
+        f.close()
+        st = os.stat(filename)
+        os.chmod(filename, st.st_mode | stat.S_IEXEC)
+        return filename
+
+    def get_working_dir(self, gerrit, project):
+        return '%s-%s-tmp' % (gerrit['host'],  project)
+
+    def _run_cmd(self, cmd, ssh_wrapper):
+        out, err = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            close_fds=True, env={'GIT_SSH': ssh_wrapper_filename}
+        ).communicate()
+
+        logging.debug(out)
+        logging.debug(err)
+
+    def git(self, git_command, gerrit, project, args=None, branch=None,
+            working_dir=None, cleanup=False):
+        """Wrapper around running git commands."""
+        binary = '/usr/bin/git'
+        git_ssh_url = 'ssh://%s@%s:%s/%s' % (
+            gerrit['username'], gerrit['host'], gerrit['port'], project)
+        if working_dir is None:
+            working_dir = self.get_working_dir(gerrit, project)
+        cmd = [binary, git_command, git_ssh_url]
+        if git_command == 'clone':
+            cmd_args.append(working_dir)
+        if args is not None:
+            cmd_args += args
+
+        ssh_wrapper_filename = self.make_ssh_wrapper(gerrit)
+
+        self._run_cmd(cmd, ssh_wrapper_filename)
+
+        if git_command == 'clone':
+            # only if we're cloning fresh, switch to the specified branch
+            self._run_cmd(
+                [binary, 'checkout', branch], ssh_wrapper_filename)
+            self._run_cmd(
+                [binary, 'pull'], ssh_wrapper_filename)
+
+        if cleanup:
+            self._run_cmd(['rm', '-rf', working_dir])
+
+
+@ActionRegistry.register('zoidberg.SyncBranch')
+class SyncBranchAction(GitSshAction):
     def _do_validate_config(self, cfg, cfg_block):
         return True
 
     def _do_run(self, event, cfg, action_cfg, source):
-        print event.comment
+        target = cfg.gerrits[action_cfg['target']]
+        branch = event.ref_update.refname
+        project = event.ref_update.project
+
+        self.git('clone', gerrit=source, project=project, branch=branch)
+
+        self.git(
+            'push', gerrit=target, project=project,
+            args=['%s:refs/heads/%s' % (branch, branch), '--force'],
+            cleanup=True, working_dir=self.get_working_dir(source))
+
+
+@ActionRegistry.register('zoidberg.SyncReviewCode')
+class SyncReviewCodeAction(GitSshAction):
+    def _do_validate_config(self, cfg, cfg_block):
+        return True
+
+    def _do_run(self, event, cfg, action_cfg, source):
+        target = cfg.gerrits[action_cfg['target']]
+        branch = event.change.branch
+        project = event.change.project
+        ref = event.patchset.ref
+        topic = event.change.topic
+
+        # no easy way to do the sync through the gerrit client, so we put
+        # together a short shell script to do it here.
+
+        self.git('clone', gerrit=target, project=project, branch=branch)
+
+        # fetch the ref submitted
+        self.git('fetch', gerrit=source, project=project, args=[ref])
+
+        # push FETCH_HEAD to the target gerrit and clean up
+        self.git(
+            'push', gerrit=target, project=project,
+            args=['FETCH_HEAD:refs/for/%s/%s' % (branch, topic)],
+            cleanup=True)
 
 
 @ActionRegistry.register('zoidberg.PropagateComment')
@@ -87,162 +190,3 @@ class PropagateCommentAction(Action):
         message = u'%s\n\n--------\n\n%s' % (message_header, event.comment)
         cmd = u'review %s -m "%s"' % (commit, message)
         target_gerrit['client'].run_command(cmd)
-
-
-"""
-{
-    "type":"ref-updated",
-    "submitter":{
-        "name":"Nikki Heald",
-        "email":"nicky@notnowlewis.com"
-    },
-    "refUpdate":{
-        "oldRev":"a55b752df1b2c83a38c88ecb046dd1669a7a695e",
-        "newRev":"ed06e568b2875dee876dea492a7decf0d48aa4e1",
-        "refName":"master",
-        "project":"nikki"
-    }
-}
-{
-    "type":"change-merged",
-    "change":{
-        "project":"nikki",
-        "branch":"master",
-        "topic":"woohoo",
-        "id":"I54f9db5c9d3d3b2beaf1932fca22a9d808b46f15",
-        "number":"8",
-        "subject":"heeeeeeeeeeeloo",
-        "owner":{
-            "name":"Nikki Heald",
-            "email":"nicky@notnowlewis.com"
-        },
-        "url":"http://10.0.3.38:8080/8"
-    },
-    "patchSet":{
-        "number":"3",
-        "revision":"ed06e568b2875dee876dea492a7decf0d48aa4e1",
-        "ref":"refs/changes/08/8/3",
-        "uploader":{
-            "name":"Nikki Heald","email":"nicky@notnowlewis.com"
-        },
-        "createdOn":1427901393
-    },
-    "submitter":{
-        "name":"Nikki Heald",
-        "email":"nicky@notnowlewis.com"
-    }
-}
-"""
-
-@ActionRegistry.register('zoidberg.MarkChangeAsMerged')
-class MarkChangeAsMergedAction(Action):
-    pass
-
-
-class GitSshAction(Action):
-    """Common code to run git+ssh commands."""
-    def get_gerrit_credentials(self, source, target):
-        """Generate a dict with user/key/host/port details."""
-        data = {
-            'source-username': source['username'],
-            'source-host': source['host'],
-            'source-port': source['port'],
-            'target-username': target['username'],
-            'target-host': target['host'],
-            'target-port': target['port']
-        }
-        return data
-
-    def write_ssh_wrapper(self, data, template, filename):
-        f = open(filename, 'w')
-        f.write(template)
-        f.close()
-        st = os.stat(filename)
-        os.chmod(filename, st.st_mode | stat.S_IEXEC)
-
-    def run_git_ssh_script(self, script, data, target):
-        """
-        script must use GIT_SSH=%(ssh-script)s in front of any git commands.
-        target is the config block for the gerrit we're interacting with.
-        """
-        cwd = os.getcwd()
-        data['ssh-script'] = cwd + '/.tmp_ssh_' + target['host']
-
-        # no way to pass the ssh key file to git commands! so we create
-        # temporary wrapper files that inject it into the ssh command git uses
-        git_ssh = """#!/bin/bash
-        ssh -i %s $@
-        """ % target['key_filename']
-        self.write_ssh_wrapper(data, git_ssh, data['ssh-script'])
-        print script % data
-        # TODO: Popen and log output
-        os.system(script % data)
-
-    def clone_source_repo(self, data, source):
-        """source is the config block of the source gerrit."""
-        script = "GIT_SSH=%(ssh-script)s git clone "
-        script += "ssh://%(source-username)s@%(source-host)s:%(source-port)s/"
-        script += "%(project)s %(source-host)s-%(project)s-tmp; "
-        self.run_git_ssh_script(script, data, source)
-        
-
-@ActionRegistry.register('zoidberg.SyncBranch')
-class SyncBranchAction(GitSshAction):
-    def _do_validate_config(self, cfg, cfg_block):
-        return True
-
-    def _do_run(self, event, cfg, action_cfg, source):
-        target = cfg.gerrits[action_cfg['target']]
-        data = self.get_gerrit_credentials(source, target)
-        data['branch'] = event.ref_update.refname
-        data['project'] = event.ref_update.project
-
-        self.clone_source_repo(data, source)
-
-        # check out the branch
-        script = "cd %(source-host)s-%(project)s-tmp; "
-        script += "GIT_SSH=%(ssh-script)s git checkout %(branch)s;"
-        script += "GIT_SSH=%(ssh-script)s git pull;"
-        self.run_git_ssh_script(script, data, source)
-
-        # push to the target repo
-        script = "cd %(source-host)s-%(project)s-tmp; "
-        script += "GIT_SSH=%(ssh-script)s git push --force "
-        script += "ssh://%(target-username)s@%(target-host)s:%(target-port)s/"
-        script += "%(project)s %(branch)s:refs/heads/%(branch)s; "
-        script += "cd ..; rm -rf %(source-host)s-%(project)s-tmp;"
-        self.run_git_ssh_script(script, data, target)
-
-
-@ActionRegistry.register('zoidberg.SyncReviewCode')
-class SyncReviewCodeAction(GitSshAction):
-    def _do_validate_config(self, cfg, cfg_block):
-        return True
-
-    def _do_run(self, event, cfg, action_cfg, source):
-        target = cfg.gerrits[action_cfg['target']]
-        data = self.get_gerrit_credentials(source, target)
-        data['branch'] = event.change.branch
-        data['project'] = event.change.project
-        data['ref'] = event.patchset.ref
-        data['topic'] = event.change.topic
-
-        # no easy way to do the sync through the gerrit client, so we put
-        # together a short shell script to do it here.
-
-        self.clone_source_repo(data, source)
-
-        # fetch the ref submitted
-        script = "cd %(source-host)s-%(project)s-tmp; "
-        script += "GIT_SSH=%(ssh-script)s git fetch "
-        script += "ssh://%(source-username)s@%(source-host)s:%(source-port)s/"
-        script += "%(project)s %(ref)s;"
-        self.run_git_ssh_script(script, data, source)
-
-        # push FETCH_HEAD to the target gerrit and clean up
-        script = "cd %(source-host)s-%(project)s-tmp; "
-        script += "GIT_SSH=%(ssh-script)s git push "
-        script += "ssh://%(target-username)s@%(target-host)s:%(target-port)s/"
-        script += "%(project)s FETCH_HEAD:refs/for/%(branch)s/%(topic)s; "
-        script += "cd ..; rm -rf %(source-host)s-%(project)s-tmp;"
-        self.run_git_ssh_script(script, data, target)
