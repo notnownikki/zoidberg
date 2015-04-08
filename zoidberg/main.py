@@ -13,7 +13,7 @@ options = parser.parse_args()
 log_level = logging.INFO
 
 if options.verbose:
-	log_level = logging.DEBUG
+    log_level = logging.DEBUG
 
 logging.basicConfig(
     format='%(asctime)s %(levelname)s %(message)s', level=log_level)

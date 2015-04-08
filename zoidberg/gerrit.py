@@ -1,3 +1,4 @@
+import logging
 from pygerrit.client import GerritClient as PyGerritClient
 from pygerrit.error import GerritError
 from pygerrit.ssh import (
@@ -44,8 +45,11 @@ class GerritClient(PyGerritClient):
     def __init__(self, host, username, key_filename, port=29418):
         super(GerritClient, self).__init__(
             host=host, username=username, port=port)
-        self._ssh_client = GerritSSHClient(host, username=username, port=port)
-        self._ssh_client.key_filename = key_filename
+        self.failed_events = []
+        # At this point, we don't have an ssh connection active.
+        # That's handled by the event processing loop, which will
+        # try to activate ssh connections for a client that isn't
+        # connected.
 
     def stop_event_stream(self):
         """Stop streaming events from `gerrit stream-events`."""
@@ -60,3 +64,26 @@ class GerritClient(PyGerritClient):
             self._stream = None
             with self._events.mutex:
                 self._events.queue.clear()
+
+    def activate_ssh(self, host, username, key_filename, port=29418):
+        """Activates the ssh connection."""
+        self._ssh_client = GerritSSHClient(host, username=username, port=port)
+        self._ssh_client.key_filename = key_filename
+        logging.info(
+            'Connected to %s, gerrit version %s'
+            % (host, self.gerrit_version()))
+
+    def is_active(self):
+        transport = self._ssh_client.get_transport()
+        if transport and transport.is_active():
+            return True
+        return False
+
+    def store_failed_event(self, event):
+        """Stores a GerritEvent object so it can be queued later."""
+        self.failed_events.append(event)
+
+    def enqueue_failed_events(self):
+        for e in self.failed_events:
+            self._events.put(e)
+        self.failed_events = []

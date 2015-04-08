@@ -1,3 +1,4 @@
+from gerrit import GerritClient
 import logging
 import re
 
@@ -37,6 +38,17 @@ class Configuration(object):
             self.gerrits[name]['project_re'] = re.compile(
                 gerrit[name]['project-pattern'])
             self.gerrits[name]['events'] = {}
+
+            # client connection details
+            username = self.gerrits[name].get('username')
+            host = self.gerrits[name].get('host')
+            key_filename = self.gerrits[name].get('key_filename')
+            name = self.gerrits[name].get('name')
+            port = self.gerrits[name].get('port', 29418)
+            self.gerrits[name]['client'] = GerritClient(
+                username=username, host=host, key_filename=key_filename,
+                port=port)
+
             for event in gerrit[name]['events']:
                 event_type = event['type']
                 if event_type not in self.gerrits[name]['events']:

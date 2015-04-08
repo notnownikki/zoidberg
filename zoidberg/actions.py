@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import stat
 import subprocess
 
@@ -25,7 +24,7 @@ class ActionRegistry(object):
 
     @classmethod
     def get_all(cls):
-        return self._actions.values()
+        return cls._actions.values()
 
 
 class ActionValidationError(Exception):
@@ -52,6 +51,11 @@ class Action(object):
                 branch = event.ref_update.refname
             if not action_cfg['branch_re'].match(branch):
                 return
+        target_client = cfg.gerrits[action_cfg['target']]['client']
+        if not target_client.is_active():
+            # target gerrit isn't up, requeue the event
+            source['client'].store_failed_event(event)
+            return
         self._do_run(event, cfg, action_cfg, source)
 
 

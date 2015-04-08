@@ -24,9 +24,8 @@ import actions
 import logging
 import os
 import pygerrit
-import sys
+import time
 import yaml
-import gerrit
 import configuration
 
 
@@ -42,32 +41,34 @@ class Zoidberg(object):
                     a = actions.ActionRegistry.get(action['action'])
                     a().validate_config(config, action)
 
-    def connect_clients(self, config):
-        for gerrit_name in config.gerrits:
-            gerrit_config = config.gerrits.get(gerrit_name)
+    def connect_client(self, gerrit_config):
             # client connection details
             username = gerrit_config.get('username')
             host = gerrit_config.get('host')
             key_filename = gerrit_config.get('key_filename')
             name = gerrit_config.get('name')
-            # connect client and store the connected client
-            client = gerrit.GerritClient(
-                username=username, host=host, key_filename=key_filename)
-            logging.info(
-                'Connected to %s at %s, gerrit version %s' %
-                (name, host, client.gerrit_version()))
-            client.start_event_stream()
-            gerrit_config['client'] = client
+            port = gerrit_config.get('port', 29418)
+            client = gerrit_config.get('client')
+            try:
+                # activate the client's ssh and start streaming events
+                if not client.is_active():
+                    client.activate_ssh(host, username, key_filename, port)
+                    client.start_event_stream()
+            except pygerrit.error.GerritError:
+                # if there's an error, log it and we'll try later
+                logging.error(
+                    'Could not connect to %s at %s'
+                    % (name, host))
 
     def load_config(self, config_file):
         config_from_yaml = yaml.load(open(config_file, 'r'))
         config = configuration.Configuration(config_from_yaml)
         self.validate_actions(config)
-        self.connect_clients(config)
         self.config_filename = config_file
         self.config_mtime = os.stat(config_file).st_mtime
         self.config = config
-
+        # TODO: if any events have come in, transfer them across
+        # to the new clients
 
     def run_action(self, action_cfg, event, gerrit_cfg):
         logging.info(
@@ -85,6 +86,10 @@ class Zoidberg(object):
         elif hasattr(event, 'ref_update'):
             project = event.ref_update.project
 
+        if project is None:
+            # no project? not much we can do!
+            return
+
         if gerrit_cfg['project_re'].match(project):
             if event.name in gerrit_cfg['events']:
                 for action_cfg in gerrit_cfg['events'][event.name]:
@@ -93,15 +98,37 @@ class Zoidberg(object):
     def config_file_has_changed(self):
         return self.config_mtime < os.stat(self.config_filename).st_mtime
 
+    def get_client(self, gerrit_cfg):
+        client = gerrit_cfg['client']
+        if not client.is_active():
+            logging.info(
+                'Client for %s was not active, trying to connect...'
+                % gerrit_cfg['name'])
+            time.sleep(1)
+            self.connect_client(gerrit_cfg)
+        return client
+
+    def enqueue_failed_events(self, gerrit_cfg):
+        client = self.get_client(gerrit_cfg)
+        client.enqueue_failed_events()
+
+    def get_event(self, gerrit_cfg, timeout=1):
+        client = self.get_client(gerrit_cfg)
+        return client.get_event(timeout=timeout)
+
     def process_loop(self):
         while True:
             for gerrit_name in self.config.gerrits:
+                logging.debug('Polling %s for events' % gerrit_name)
                 gerrit_cfg = self.config.gerrits[gerrit_name]
-                client = self.config.gerrits[gerrit_name]['client']
-                event = client.get_event(timeout=1)
+
+                # any failed actions due to connection issues get requeued
+                self.enqueue_failed_events(gerrit_cfg)
+
+                event = self.get_event(gerrit_cfg, timeout=1)
                 while event:
                     self.process_event(event, gerrit_cfg)
-                    event = client.get_event(timeout=1)
+                    event = self.get_event(gerrit_cfg, timeout=1)
             if self.config_file_has_changed():
                 self.config.close_clients()
                 self.load_config(self.config_filename)
@@ -109,7 +136,7 @@ class Zoidberg(object):
     def run(self):
         try:
             self.process_loop()
-        except KeyboardInterrupt:            
+        except KeyboardInterrupt:
             for gerrit_name in self.config.gerrits:
                 logging.info('Shutting down stream for %s' % gerrit_name)
                 self.config.gerrits[gerrit_name]['client'].stop_event_stream()
