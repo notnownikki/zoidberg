@@ -46,3 +46,17 @@ class GerritClient(PyGerritClient):
             host=host, username=username, port=port)
         self._ssh_client = GerritSSHClient(host, username=username, port=port)
         self._ssh_client.key_filename = key_filename
+
+    def stop_event_stream(self):
+        """Stop streaming events from `gerrit stream-events`."""
+        if self._stream:
+            self._stream.stop()
+
+            # fix for bug where pygerrit's stop_event_stream would insist on
+            # one more event coming from the stream before it would shut down
+            self._ssh_client.close()
+
+            self._stream.join()
+            self._stream = None
+            with self._events.mutex:
+                self._events.queue.clear()

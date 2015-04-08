@@ -60,6 +60,11 @@ class GitSshAction(Action):
     def make_ssh_wrapper(self, gerrit):
         """
         Creates a shell script to wrap ssh with the gerrit key.
+
+        Git doesn't have any way of telling it what ssh key to use,
+        so we have to output a wrapper script around ssh and use the
+        GIT_SSH environment variable to use the specified ssh key.
+
         Returns the filename of the script.
         """
         filename = os.path.join(

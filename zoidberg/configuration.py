@@ -1,3 +1,4 @@
+import logging
 import re
 
 
@@ -43,3 +44,10 @@ class Configuration(object):
                 if 'branch-pattern' in event:
                     event['branch_re'] = re.compile(event['branch-pattern'])
                 self.gerrits[name]['events'][event_type].append(event.copy())
+
+    def close_clients(self):
+        for gerrit_name in self.gerrits:
+            logging.info('Shutting down client for %s' % gerrit_name)
+            # shutting down the event stream also closes the client
+            self.gerrits[gerrit_name]['client'].stop_event_stream()
+            logging.info('Shut down client for %s' % gerrit_name)
