@@ -59,7 +59,8 @@ class Configuration(object):
 
     def close_clients(self):
         for gerrit_name in self.gerrits:
-            logging.info('Shutting down client for %s' % gerrit_name)
             # shutting down the event stream also closes the client
-            self.gerrits[gerrit_name]['client'].stop_event_stream()
-            logging.info('Shut down client for %s' % gerrit_name)
+            if self.gerrits[gerrit_name]['client'] is not None:
+                logging.info('Shutting down client for %s' % gerrit_name)
+                self.gerrits[gerrit_name]['client'].stop_event_stream()
+                logging.info('Shut down client for %s' % gerrit_name)

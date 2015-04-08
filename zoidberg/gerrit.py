@@ -45,11 +45,23 @@ class GerritClient(PyGerritClient):
     def __init__(self, host, username, key_filename, port=29418):
         super(GerritClient, self).__init__(
             host=host, username=username, port=port)
+        self._ssh_client.key_filename = key_filename
         self.failed_events = []
         # At this point, we don't have an ssh connection active.
         # That's handled by the event processing loop, which will
         # try to activate ssh connections for a client that isn't
         # connected.
+
+    def __eq__(self, other):
+        """Two clients are equal if they have the same connection details."""
+        return (
+            self._ssh_client.port == other._ssh_client.port
+            and
+            self._ssh_client.username == other._ssh_client.username
+            and
+            self._ssh_client.key_filename == other._ssh_client.key_filename
+            and
+            self._ssh_client.hostname == other._ssh_client.hostname)
 
     def stop_event_stream(self):
         """Stop streaming events from `gerrit stream-events`."""
@@ -67,8 +79,7 @@ class GerritClient(PyGerritClient):
 
     def activate_ssh(self, host, username, key_filename, port=29418):
         """Activates the ssh connection."""
-        self._ssh_client = GerritSSHClient(host, username=username, port=port)
-        self._ssh_client.key_filename = key_filename
+        self._ssh_client._connect()
         logging.info(
             'Connected to %s, gerrit version %s'
             % (host, self.gerrit_version()))
@@ -77,6 +88,8 @@ class GerritClient(PyGerritClient):
         transport = self._ssh_client.get_transport()
         if transport and transport.is_active():
             return True
+        if transport:
+            self._ssh_client.connected.clear()
         return False
 
     def store_failed_event(self, event):

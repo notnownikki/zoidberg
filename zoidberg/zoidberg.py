@@ -31,6 +31,7 @@ import configuration
 
 class Zoidberg(object):
     def __init__(self, config_file):
+        self.config = None
         self.load_config(config_file)
 
     def validate_actions(self, config):
@@ -66,9 +67,21 @@ class Zoidberg(object):
         self.validate_actions(config)
         self.config_filename = config_file
         self.config_mtime = os.stat(config_file).st_mtime
+
+        # move clients from old config if they have the same connection
+        if self.config is not None:
+            for gerrit_name in config.gerrits:
+                client = config.gerrits[gerrit_name]['client']
+                old_client = self.config.gerrits[gerrit_name]['client']
+
+                if old_client == client:
+                    logging.debug('Reusing client for %s' % gerrit_name)
+                    config.gerrits[gerrit_name]['client'] = old_client
+                    self.config.gerrits[gerrit_name]['client'] = None
+
+            self.config.close_clients()
+
         self.config = config
-        # TODO: if any events have come in, transfer them across
-        # to the new clients
 
     def run_action(self, action_cfg, event, gerrit_cfg):
         logging.info(
@@ -99,12 +112,11 @@ class Zoidberg(object):
         return self.config_mtime < os.stat(self.config_filename).st_mtime
 
     def get_client(self, gerrit_cfg):
-        client = gerrit_cfg['client']
+        client = gerrit_cfg.get('client')
         if not client.is_active():
             logging.info(
                 'Client for %s was not active, trying to connect...'
                 % gerrit_cfg['name'])
-            time.sleep(1)
             self.connect_client(gerrit_cfg)
         return client
 
@@ -129,8 +141,8 @@ class Zoidberg(object):
                 while event:
                     self.process_event(event, gerrit_cfg)
                     event = self.get_event(gerrit_cfg, timeout=1)
+
             if self.config_file_has_changed():
-                self.config.close_clients()
                 self.load_config(self.config_filename)
 
     def run(self):
