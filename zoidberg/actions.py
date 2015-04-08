@@ -57,20 +57,13 @@ class Action(object):
 
 class GitSshAction(Action):
     """Common code to run git+ssh commands."""
-    def get_gerrit_credentials(self, source, target):
-        """Generate a dict with user/key/host/port details."""
-        data = {
-            'source-username': source['username'],
-            'source-host': source['host'],
-            'source-port': source['port'],
-            'target-username': target['username'],
-            'target-host': target['host'],
-            'target-port': target['port']
-        }
-        return data
-
     def make_ssh_wrapper(self, gerrit):
-        filename = os.getcwd() + '/.tmp_ssh_' + gerrit['host']
+        """
+        Creates a shell script to wrap ssh with the gerrit key.
+        Returns the filename of the script.
+        """
+        filename = os.path.join(
+            os.getcwd(), '.tmp_ssh_' + gerrit['host'])
         f = open(filename, 'w')
         f.write("""#!/bin/bash
         ssh -i %s $@
@@ -81,16 +74,18 @@ class GitSshAction(Action):
         return filename
 
     def get_working_dir(self, gerrit, project):
-        return '%s-%s-tmp' % (gerrit['host'],  project)
+        """Returns the dir to work in for this gerrit/project repo."""
+        return os.path.join(
+            os.getcwd(), '%s-%s-tmp' % (gerrit['host'],  project))
 
-    def _run_cmd(self, cmd, ssh_wrapper):
+    def _run_cmd(self, cmd, wdir, ssh_wrapper=''):
         out, err = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            close_fds=True, env={'GIT_SSH': ssh_wrapper_filename}
-        ).communicate()
+            close_fds=True, env={'GIT_SSH': ssh_wrapper},
+            cwd=wdir).communicate()
 
-        logging.debug(out)
-        logging.debug(err)
+        logging.info(out)
+        logging.info(err)
 
     def git(self, git_command, gerrit, project, args=None, branch=None,
             working_dir=None, cleanup=False):
@@ -98,27 +93,43 @@ class GitSshAction(Action):
         binary = '/usr/bin/git'
         git_ssh_url = 'ssh://%s@%s:%s/%s' % (
             gerrit['username'], gerrit['host'], gerrit['port'], project)
-        if working_dir is None:
-            working_dir = self.get_working_dir(gerrit, project)
-        cmd = [binary, git_command, git_ssh_url]
+
         if git_command == 'clone':
-            cmd_args.append(working_dir)
+            # cloning repos is done inside the current zoidberg working dir
+            working_dir = os.getcwd()
+            # never cleanup when cloning
+            cleanup = False
+
+        if working_dir is None:
+            # get the dir for the gerrit/project combo
+            working_dir = self.get_working_dir(gerrit, project)
+
+        cmd = [binary, git_command, git_ssh_url]
+
+        if git_command == 'clone':
+            # clone into the gerrit/project working dir
+            cmd.append(self.get_working_dir(gerrit, project))
+
         if args is not None:
-            cmd_args += args
+            # more args passed in by the caller
+            cmd += args
 
         ssh_wrapper_filename = self.make_ssh_wrapper(gerrit)
 
-        self._run_cmd(cmd, ssh_wrapper_filename)
+        self._run_cmd(cmd, working_dir, ssh_wrapper_filename)
 
         if git_command == 'clone':
             # only if we're cloning fresh, switch to the specified branch
+            # inside the gerrit/project working directory
             self._run_cmd(
-                [binary, 'checkout', branch], ssh_wrapper_filename)
+                [binary, 'checkout', branch],
+                self.get_working_dir(gerrit, project), ssh_wrapper_filename)
             self._run_cmd(
-                [binary, 'pull'], ssh_wrapper_filename)
+                [binary, 'pull'], self.get_working_dir(gerrit, project),
+                ssh_wrapper_filename)
 
         if cleanup:
-            self._run_cmd(['rm', '-rf', working_dir])
+            self._run_cmd(['rm', '-rf', working_dir], working_dir)
 
 
 @ActionRegistry.register('zoidberg.SyncBranch')
@@ -133,10 +144,13 @@ class SyncBranchAction(GitSshAction):
 
         self.git('clone', gerrit=source, project=project, branch=branch)
 
+        # working_dir is set explicitly here because we're working inside
+        # a repo cloned from the source gerrit, but running a git command
+        # targeted at the target gerrit
         self.git(
             'push', gerrit=target, project=project,
             args=['%s:refs/heads/%s' % (branch, branch), '--force'],
-            cleanup=True, working_dir=self.get_working_dir(source))
+            cleanup=True, working_dir=self.get_working_dir(source, project))
 
 
 @ActionRegistry.register('zoidberg.SyncReviewCode')
@@ -151,10 +165,8 @@ class SyncReviewCodeAction(GitSshAction):
         ref = event.patchset.ref
         topic = event.change.topic
 
-        # no easy way to do the sync through the gerrit client, so we put
-        # together a short shell script to do it here.
-
-        self.git('clone', gerrit=target, project=project, branch=branch)
+        self.git(
+            'clone', gerrit=source, project=project, branch=branch)
 
         # fetch the ref submitted
         self.git('fetch', gerrit=source, project=project, args=[ref])
@@ -163,7 +175,7 @@ class SyncReviewCodeAction(GitSshAction):
         self.git(
             'push', gerrit=target, project=project,
             args=['FETCH_HEAD:refs/for/%s/%s' % (branch, topic)],
-            cleanup=True)
+            cleanup=True, working_dir=self.get_working_dir(source, project))
 
 
 @ActionRegistry.register('zoidberg.PropagateComment')
@@ -189,4 +201,9 @@ class PropagateCommentAction(Action):
         # prepare the message
         message = u'%s\n\n--------\n\n%s' % (message_header, event.comment)
         cmd = u'review %s -m "%s"' % (commit, message)
+        # if the comment is for a change the target gerrit does not have,
+        # gerrit will tell us that and we just carry on, because it's more
+        # efficient to try to submit the comment and fail than to do another
+        # gerrit call to see if the change exists and then do the comment
+        # if it does
         target_gerrit['client'].run_command(cmd)
