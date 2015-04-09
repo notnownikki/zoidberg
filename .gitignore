@@ -1,6 +1,8 @@
 .test
 .testrepository
 .tox
+*.egg
+build/
 *.egg-info
 *.pyc
 .tmp*

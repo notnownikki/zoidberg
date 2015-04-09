@@ -160,14 +160,7 @@ class GitSshAction(Action):
 
 @ActionRegistry.register('zoidberg.SyncBranch')
 class SyncBranchAction(GitSshAction):
-    def _do_validate_config(self, cfg, cfg_block):
-        return True
-
-    def _do_run(self, event, cfg, action_cfg, source):
-        target = cfg.gerrits[action_cfg['target']]
-        branch = event.ref_update.refname
-        project = event.ref_update.project
-
+    def push_branch_to_target(self, source, target, project, branch):
         self.git('clone', gerrit=source, project=project, branch=branch)
 
         # working_dir is set explicitly here because we're working inside
@@ -178,8 +171,22 @@ class SyncBranchAction(GitSshAction):
             args=['%s:refs/heads/%s' % (branch, branch), '--force'],
             cleanup=True, working_dir=self.get_working_dir(source, project))
 
+    def _do_validate_config(self, cfg, cfg_block):
+        return True
+
+    def _do_run(self, event, cfg, action_cfg, source):
+        target = cfg.gerrits[action_cfg['target']]
+        branch = event.ref_update.refname
+        project = event.ref_update.project
+
+        self.push_branch_to_target(source, target, project, branch)
+
     def _do_startup(self, cfg, action_cfg, source, target):
-        print("DOING STARTUP SYNC THING")
+        projects = action_cfg['projects']
+        branches = action_cfg['branches']
+        for project in projects:
+            for branch in branches:
+                self.push_branch_to_target(source, target, project, branch)
 
 
 @ActionRegistry.register('zoidberg.SyncReviewCode')
