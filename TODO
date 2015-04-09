@@ -1,3 +1,0 @@
-reload config
-switch from os.system to subprocess
-initial sync actions (e.g. sync branches when zoidberg starts up)

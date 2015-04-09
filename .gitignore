@@ -1,3 +1,7 @@
+.test
+.testrepository
+.tox
+*.egg-info
 *.pyc
 .tmp*
 .env

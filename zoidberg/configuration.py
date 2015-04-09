@@ -33,8 +33,11 @@ class Configuration(object):
                 'name': name,
                 'port': gerrit[name].get('port', 29418)
             }
-            for k in ['username', 'project-pattern', 'host', 'key_filename']:
-                self.gerrits[name][k] = gerrit[name][k]
+            to_copy = [
+                'username', 'project-pattern', 'host', 'key_filename',
+                'startup']
+            for k in to_copy:
+                self.gerrits[name][k] = gerrit[name].get(k)
             self.gerrits[name]['project_re'] = re.compile(
                 gerrit[name]['project-pattern'])
             self.gerrits[name]['events'] = {}

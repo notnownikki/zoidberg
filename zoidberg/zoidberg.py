@@ -24,42 +24,16 @@ import actions
 import logging
 import os
 import pygerrit
-import time
 import yaml
 import configuration
+from Queue import Queue
 
 
 class Zoidberg(object):
     def __init__(self, config_file):
         self.config = None
         self.load_config(config_file)
-
-    def validate_actions(self, config):
-        for gerrit_name in config.gerrits:
-            gerrit_config = config.gerrits.get(gerrit_name)
-            for event_type in gerrit_config['events']:
-                for action in gerrit_config['events'][event_type]:
-                    a = actions.ActionRegistry.get(action['action'])
-                    a().validate_config(config, action)
-
-    def connect_client(self, gerrit_config):
-            # client connection details
-            username = gerrit_config.get('username')
-            host = gerrit_config.get('host')
-            key_filename = gerrit_config.get('key_filename')
-            name = gerrit_config.get('name')
-            port = gerrit_config.get('port', 29418)
-            client = gerrit_config.get('client')
-            try:
-                # activate the client's ssh and start streaming events
-                if not client.is_active():
-                    client.activate_ssh(host, username, key_filename, port)
-                    client.start_event_stream()
-            except pygerrit.error.GerritError:
-                # if there's an error, log it and we'll try later
-                logging.error(
-                    'Could not connect to %s at %s'
-                    % (name, host))
+        self.startup_tasks = Queue()
 
     def load_config(self, config_file):
         config_from_yaml = yaml.load(open(config_file, 'r'))
@@ -82,6 +56,89 @@ class Zoidberg(object):
             self.config.close_clients()
 
         self.config = config
+
+    def validate_actions(self, config):
+        for gerrit_name in config.gerrits:
+            gerrit_config = config.gerrits.get(gerrit_name)
+            for event_type in gerrit_config['events']:
+                for action in gerrit_config['events'][event_type]:
+                    a = actions.ActionRegistry.get(action['action'])
+                    a().validate_config(config, action)
+
+    def run(self):
+        try:
+            self.process_loop()
+        except KeyboardInterrupt:
+            for gerrit_name in self.config.gerrits:
+                logging.info('Shutting down stream for %s' % gerrit_name)
+                self.config.gerrits[gerrit_name]['client'].stop_event_stream()
+                logging.info('Shut down stream for %s' % gerrit_name)
+
+    def process_loop(self):
+        while True:
+            # process any startup tasks
+            self.process_startup_tasks()
+            for gerrit_name in self.config.gerrits:
+                logging.debug('Polling %s for events' % gerrit_name)
+                gerrit_cfg = self.config.gerrits[gerrit_name]
+
+                # any failed actions due to connection issues get requeued
+                self.enqueue_failed_events(gerrit_cfg)
+
+                event = self.get_event(gerrit_cfg, timeout=1)
+                while event:
+                    self.process_event(event, gerrit_cfg)
+                    event = self.get_event(gerrit_cfg, timeout=1)
+
+            if self.config_file_has_changed():
+                self.load_config(self.config_filename)
+
+    def process_startup_tasks(self):
+        could_not_run = []
+        while not self.startup_tasks.empty():
+            task = self.startup_tasks.get(block=False)
+            logging.debug(
+                'Running startup task %s for %s'
+                % (task['task']['action'], task['source']['name']))
+            a = actions.ActionRegistry.get(task['task']['action'])
+            has_run = a().startup(
+                self.config, task['task'], task['source'])
+            if not has_run:
+                logging.debug(
+                    'Failed running startup task %s for %s'
+                    % (task['task']['action'], task['source']['name']))
+                could_not_run.append(task)
+        for task in could_not_run:
+            self.startup_tasks.put(task)
+
+    def connect_client(self, gerrit_config):
+            # client connection details
+            username = gerrit_config.get('username')
+            host = gerrit_config.get('host')
+            key_filename = gerrit_config.get('key_filename')
+            name = gerrit_config.get('name')
+            port = gerrit_config.get('port', 29418)
+            client = gerrit_config.get('client')
+            try:
+                # activate the client's ssh and start streaming events
+                if not client.is_active():
+                    client.activate_ssh(host, username, key_filename, port)
+                    client.start_event_stream()
+                    self.queue_startup_tasks(gerrit_config)
+            except pygerrit.error.GerritError:
+                # if there's an error, log it and we'll try later
+                logging.error(
+                    'Could not connect to %s at %s'
+                    % (name, host))
+
+    def queue_startup_tasks(self, gerrit_config):
+        if 'startup' in gerrit_config and gerrit_config['startup']:
+            for task in gerrit_config['startup']:
+                logging.debug(
+                    'Queuing startup task %s for %s'
+                    % (task['action'], gerrit_config['name']))
+                self.startup_tasks.put(
+                    {'task': task, 'source': gerrit_config})
 
     def run_action(self, action_cfg, event, gerrit_cfg):
         logging.info(
@@ -127,29 +184,3 @@ class Zoidberg(object):
     def get_event(self, gerrit_cfg, timeout=1):
         client = self.get_client(gerrit_cfg)
         return client.get_event(timeout=timeout)
-
-    def process_loop(self):
-        while True:
-            for gerrit_name in self.config.gerrits:
-                logging.debug('Polling %s for events' % gerrit_name)
-                gerrit_cfg = self.config.gerrits[gerrit_name]
-
-                # any failed actions due to connection issues get requeued
-                self.enqueue_failed_events(gerrit_cfg)
-
-                event = self.get_event(gerrit_cfg, timeout=1)
-                while event:
-                    self.process_event(event, gerrit_cfg)
-                    event = self.get_event(gerrit_cfg, timeout=1)
-
-            if self.config_file_has_changed():
-                self.load_config(self.config_filename)
-
-    def run(self):
-        try:
-            self.process_loop()
-        except KeyboardInterrupt:
-            for gerrit_name in self.config.gerrits:
-                logging.info('Shutting down stream for %s' % gerrit_name)
-                self.config.gerrits[gerrit_name]['client'].stop_event_stream()
-                logging.info('Shut down stream for %s' % gerrit_name)

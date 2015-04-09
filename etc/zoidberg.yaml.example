@@ -12,6 +12,10 @@
         action: zoidberg.SyncBranch
         branch-pattern: ^master$
         target: third-party
+      startup:
+      - action: zoidberg.SyncBranch
+        target: third-party
+        args: {stuff: [master]}
   - third-party:
       host: 10.0.3.102
       key_filename: /home/zoidberg/id_rsa_third_party

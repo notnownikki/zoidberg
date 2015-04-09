@@ -19,8 +19,6 @@ class GerritSSHClient(PyGerritSSHClient):
         command execution fails.
 
         """
-        if not isinstance(command, basestring):
-            raise ValueError("command must be a string")
         gerrit_command = "gerrit " + command
 
         # fixes the unicode handling bug

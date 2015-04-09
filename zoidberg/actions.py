@@ -42,7 +42,24 @@ class Action(object):
                 % cfg_block['target'])
         self._do_validate_config(cfg, cfg_block)
 
+    def startup(self, cfg, action_cfg, source):
+        """
+        Run as a startup action, when a connection is make to gerrit.
+
+        Returns True if the target gerrit is online and action is run.
+        """
+        target = cfg.gerrits[action_cfg['target']]
+        if not target['client'].is_active():
+            return False
+
+        if hasattr(self, '_do_startup'):
+            self._do_startup(cfg, action_cfg, source, target)
+            return True
+
+        return False
+
     def run(self, event, cfg, action_cfg, source):
+        """Run the action in response to an event."""
         if 'branch_re' in action_cfg:
             branch = None
             if hasattr(event, 'change'):
@@ -160,6 +177,9 @@ class SyncBranchAction(GitSshAction):
             'push', gerrit=target, project=project,
             args=['%s:refs/heads/%s' % (branch, branch), '--force'],
             cleanup=True, working_dir=self.get_working_dir(source, project))
+
+    def _do_startup(self, cfg, action_cfg, source, target):
+        print("DOING STARTUP SYNC THING")
 
 
 @ActionRegistry.register('zoidberg.SyncReviewCode')
