@@ -35,6 +35,81 @@ class Zoidberg(object):
         self.load_config(config_file)
         self.startup_tasks = Queue()
 
+    def run(self):
+        try:
+            self.process_loop()
+        except KeyboardInterrupt:
+            # TODO: respond to SIGTERM and clean up nicely
+            for gerrit_name in self.config.gerrits:
+                logging.info('Shutting down stream for %s' % gerrit_name)
+                self.config.gerrits[gerrit_name]['client'].stop_event_stream()
+                logging.info('Shut down stream for %s' % gerrit_name)
+
+    def process_loop(self):
+        while True:
+            # process any startup tasks
+            self.process_startup_tasks()
+            for gerrit_name in self.config.gerrits:
+                logging.debug('Polling %s for events' % gerrit_name)
+
+                # most things are based around these blocks of configuration
+                # which get augmented with useful objects like gerrit clients
+                # and regular expressions
+                gerrit_cfg = self.config.gerrits[gerrit_name]
+
+                # any failed actions due to connection issues get requeued
+                self.enqueue_failed_events(gerrit_cfg)
+
+                event = self.get_event(gerrit_cfg, timeout=1)
+
+                while event:
+                    self.process_event(event, gerrit_cfg)
+                    event = self.get_event(gerrit_cfg, timeout=1)
+
+            if self.config_file_has_changed():
+                logging.info(
+                    'Reloading configuration from %s' % self.config_filename)
+                self.load_config(self.config_filename)
+
+    def process_startup_tasks(self):
+        # keep track of the tasks that could not be run
+        # so we can re-queue them later on
+        could_not_run = []
+
+        while not self.startup_tasks.empty():
+            task = self.startup_tasks.get(block=False)
+            logging.debug(
+                'Running startup task %s for %s'
+                % (task['task']['action'], task['source']['name']))
+
+            # task['task']['action'] will be the name the action is
+            # registered with, e.g. zoidberg.FooSomeBars
+            a = actions.ActionRegistry.get(task['task']['action'])
+            has_run = a().startup(
+                self.config, task['task'], task['source'])
+
+            # if the task could not be run for some reason (most likely
+            # that the target gerrit was down), we want to put it back
+            # in the queue
+            if not has_run:
+                logging.debug(
+                    'Failed running startup task %s for %s'
+                    % (task['task']['action'], task['source']['name']))
+                could_not_run.append(task)
+
+        # these will be run the next time round, so there's a chance for
+        # failed gerrit clients to get connected again
+        for task in could_not_run:
+            self.startup_tasks.put(task)
+
+    def run_action(self, action_cfg, event, gerrit_cfg):
+        logging.info(
+            'Running %s for %s' % (action_cfg['action'], gerrit_cfg['name']))
+        a = actions.ActionRegistry.get(action_cfg['action'])
+        a().run(
+            event=event, cfg=self.config, action_cfg=action_cfg,
+            source=gerrit_cfg)
+
     def load_config(self, config_file):
         config_from_yaml = yaml.load(open(config_file, 'r'))
         config = configuration.Configuration(config_from_yaml)
@@ -58,58 +133,13 @@ class Zoidberg(object):
         self.config = config
 
     def validate_actions(self, config):
+        # TODO: verify startup tasks here too
         for gerrit_name in config.gerrits:
             gerrit_config = config.gerrits.get(gerrit_name)
             for event_type in gerrit_config['events']:
                 for action in gerrit_config['events'][event_type]:
                     a = actions.ActionRegistry.get(action['action'])
                     a().validate_config(config, action)
-
-    def run(self):
-        try:
-            self.process_loop()
-        except KeyboardInterrupt:
-            for gerrit_name in self.config.gerrits:
-                logging.info('Shutting down stream for %s' % gerrit_name)
-                self.config.gerrits[gerrit_name]['client'].stop_event_stream()
-                logging.info('Shut down stream for %s' % gerrit_name)
-
-    def process_loop(self):
-        while True:
-            # process any startup tasks
-            self.process_startup_tasks()
-            for gerrit_name in self.config.gerrits:
-                logging.debug('Polling %s for events' % gerrit_name)
-                gerrit_cfg = self.config.gerrits[gerrit_name]
-
-                # any failed actions due to connection issues get requeued
-                self.enqueue_failed_events(gerrit_cfg)
-
-                event = self.get_event(gerrit_cfg, timeout=1)
-                while event:
-                    self.process_event(event, gerrit_cfg)
-                    event = self.get_event(gerrit_cfg, timeout=1)
-
-            if self.config_file_has_changed():
-                self.load_config(self.config_filename)
-
-    def process_startup_tasks(self):
-        could_not_run = []
-        while not self.startup_tasks.empty():
-            task = self.startup_tasks.get(block=False)
-            logging.debug(
-                'Running startup task %s for %s'
-                % (task['task']['action'], task['source']['name']))
-            a = actions.ActionRegistry.get(task['task']['action'])
-            has_run = a().startup(
-                self.config, task['task'], task['source'])
-            if not has_run:
-                logging.debug(
-                    'Failed running startup task %s for %s'
-                    % (task['task']['action'], task['source']['name']))
-                could_not_run.append(task)
-        for task in could_not_run:
-            self.startup_tasks.put(task)
 
     def connect_client(self, gerrit_config):
             # client connection details
@@ -119,14 +149,18 @@ class Zoidberg(object):
             name = gerrit_config.get('name')
             port = gerrit_config.get('port', 29418)
             client = gerrit_config.get('client')
+
             try:
                 # activate the client's ssh and start streaming events
                 if not client.is_active():
                     client.activate_ssh(host, username, key_filename, port)
                     client.start_event_stream()
+                    # queue any tasks that need to be run on connection
                     self.queue_startup_tasks(gerrit_config)
             except pygerrit.error.GerritError:
                 # if there's an error, log it and we'll try later
+                # we can do this because get_client tries to connect
+                # if you get a client that is not connected
                 logging.error(
                     'Could not connect to %s at %s'
                     % (name, host))
@@ -137,20 +171,15 @@ class Zoidberg(object):
                 logging.debug(
                     'Queuing startup task %s for %s'
                     % (task['action'], gerrit_config['name']))
+                # store the task config block and the gerrit config
+                # so the task has access to everything when it's run
                 self.startup_tasks.put(
                     {'task': task, 'source': gerrit_config})
-
-    def run_action(self, action_cfg, event, gerrit_cfg):
-        logging.info(
-            'Running %s for %s' % (action_cfg['action'], gerrit_cfg['name']))
-        a = actions.ActionRegistry.get(action_cfg['action'])
-        a().run(
-            event=event, cfg=self.config, action_cfg=action_cfg,
-            source=gerrit_cfg)
 
     def process_event(self, event, gerrit_cfg):
         project = None
 
+        # deal with the different event structures
         if hasattr(event, 'change'):
             project = event.change.project
         elif hasattr(event, 'ref_update'):
@@ -160,6 +189,7 @@ class Zoidberg(object):
             # no project? not much we can do!
             return
 
+        # only run for projects we're interested in
         if gerrit_cfg['project_re'].match(project):
             if event.name in gerrit_cfg['events']:
                 for action_cfg in gerrit_cfg['events'][event.name]:
@@ -171,6 +201,8 @@ class Zoidberg(object):
     def get_client(self, gerrit_cfg):
         client = gerrit_cfg.get('client')
         if not client.is_active():
+            # this allows us to lazily connect clients, and reconnect if
+            # a gerrit goes down for whatever reason
             logging.info(
                 'Client for %s was not active, trying to connect...'
                 % gerrit_cfg['name'])

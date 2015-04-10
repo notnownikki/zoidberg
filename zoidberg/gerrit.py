@@ -21,7 +21,7 @@ class GerritSSHClient(PyGerritSSHClient):
         """
         gerrit_command = "gerrit " + command
 
-        # fixes the unicode handling bug
+        # fixes the unicode handling bug while we wait for 0.2.6 release
         try:
             gerrit_command.encode('ascii')
         except UnicodeEncodeError:
@@ -68,6 +68,7 @@ class GerritClient(PyGerritClient):
 
             # fix for bug where pygerrit's stop_event_stream would insist on
             # one more event coming from the stream before it would shut down
+            # and we don't want to wait
             self._ssh_client.close()
 
             self._stream.join()
@@ -87,6 +88,9 @@ class GerritClient(PyGerritClient):
         if transport and transport.is_active():
             return True
         if transport:
+            # instead of checking the transport, pygerrit uses an Event
+            # but if a gerrit disconnects, the Event isn't updated,
+            # so we check the transport and update things nicely here.
             self._ssh_client.connected.clear()
         return False
 

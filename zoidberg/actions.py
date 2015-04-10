@@ -32,11 +32,45 @@ class ActionValidationError(Exception):
 
 
 class Action(object):
+
+    def _do_startup(self, cfg, action_cfg, source, target):
+        """
+        Implement this method on your subclass if the action can also run
+        as a startup task.
+
+        cfg: the whole zoidberg configuration
+        action_cfg: the action config dict
+        source: config dict for the source gerrit
+        target: config dict for the target gerrit
+        """
+
+    def _do_run(self, event, cfg, action_cfg, source):
+        """
+        Implement this method on your subclass.
+
+        event: the event object from pygerrit
+        cfg: the whole zoidberg configuration
+        action_cfg: the action config dict
+        source: config dict for the source gerrit
+        """
+
+    def _do_validate_config(self, cfg, cfg_block):
+        """
+        Implement this on your subclass if you have action specific
+        configuration rules.
+
+        Return True is the configuration is valid.
+        """
+        return True
+
     def validate_config(self, cfg, cfg_block):
         if 'target' not in cfg_block:
+            # every action requires a target gerrit
             raise ActionValidationError(
                 'No target found for %s action' % cfg_block['type'])
+
         if cfg_block['target'] not in cfg.gerrits.keys():
+            # every target gerrit must exist in the configuration
             raise ActionValidationError(
                 'Target %s does not reference a gerrit instance'
                 % cfg_block['target'])
@@ -44,7 +78,7 @@ class Action(object):
 
     def startup(self, cfg, action_cfg, source):
         """
-        Run as a startup action, when a connection is make to gerrit.
+        Run as a startup task, when a connection is make to gerrit.
 
         Returns True if the target gerrit is online and action is run.
         """
@@ -66,13 +100,17 @@ class Action(object):
                 branch = event.change.branch
             elif hasattr(event, 'ref_update'):
                 branch = event.ref_update.refname
+
             if not action_cfg['branch_re'].match(branch):
+                # not interested in events for this branch!
                 return
+
         target_client = cfg.gerrits[action_cfg['target']]['client']
         if not target_client.is_active():
             # target gerrit isn't up, requeue the event
             source['client'].store_failed_event(event)
             return
+
         self._do_run(event, cfg, action_cfg, source)
 
 
@@ -84,7 +122,7 @@ class GitSshAction(Action):
 
         Git doesn't have any way of telling it what ssh key to use,
         so we have to output a wrapper script around ssh and use the
-        GIT_SSH environment variable to use the specified ssh key.
+        GIT_SSH environment variable to use the wrapper script.
 
         Returns the filename of the script.
         """
@@ -110,8 +148,9 @@ class GitSshAction(Action):
             close_fds=True, env={'GIT_SSH': ssh_wrapper},
             cwd=wdir).communicate()
 
-        logging.info(out)
-        logging.info(err)
+        logging.debug(cmd)
+        logging.debug(out)
+        logging.debug(err)
 
     def git(self, git_command, gerrit, project, args=None, branch=None,
             working_dir=None, cleanup=False):
@@ -171,9 +210,6 @@ class SyncBranchAction(GitSshAction):
             args=['%s:refs/heads/%s' % (branch, branch), '--force'],
             cleanup=True, working_dir=self.get_working_dir(source, project))
 
-    def _do_validate_config(self, cfg, cfg_block):
-        return True
-
     def _do_run(self, event, cfg, action_cfg, source):
         target = cfg.gerrits[action_cfg['target']]
         branch = event.ref_update.refname
@@ -191,9 +227,6 @@ class SyncBranchAction(GitSshAction):
 
 @ActionRegistry.register('zoidberg.SyncReviewCode')
 class SyncReviewCodeAction(GitSshAction):
-    def _do_validate_config(self, cfg, cfg_block):
-        return True
-
     def _do_run(self, event, cfg, action_cfg, source):
         target = cfg.gerrits[action_cfg['target']]
         branch = event.change.branch
@@ -216,10 +249,6 @@ class SyncReviewCodeAction(GitSshAction):
 
 @ActionRegistry.register('zoidberg.PropagateComment')
 class PropagateCommentAction(Action):
-
-    def _do_validate_config(self, cfg, cfg_block):
-        return True
-
     def _do_run(self, event, cfg, action_cfg, source):
         target_gerrit = cfg.gerrits[action_cfg['target']]
         commit = event.patchset.revision
