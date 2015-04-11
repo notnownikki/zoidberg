@@ -1,4 +1,5 @@
 import logging
+import paramiko
 from pygerrit.client import GerritClient as PyGerritClient
 from pygerrit.error import GerritError
 from pygerrit.ssh import (
@@ -8,6 +9,10 @@ from paramiko.ssh_exception import SSHException
 
 class GerritSSHClient(PyGerritSSHClient):
     """Fixes unicode handling bug in pygerrit."""
+    def __init__(self, *args, **kwargs):
+        super(GerritSSHClient, self).__init__(*args, **kwargs)
+        self.set_missing_host_key_policy(paramiko.client.WarningPolicy())
+
     def run_gerrit_command(self, command):
         """ Run the given command.
 
@@ -21,7 +26,7 @@ class GerritSSHClient(PyGerritSSHClient):
         """
         gerrit_command = "gerrit " + command
 
-        # fixes the unicode handling bug while we wait for 0.2.6 release
+        # fixes the unicode handling bug while we wait for 0.2.9 release
         try:
             gerrit_command.encode('ascii')
         except UnicodeEncodeError:
@@ -43,6 +48,9 @@ class GerritClient(PyGerritClient):
     def __init__(self, host, username, key_filename, port=29418):
         super(GerritClient, self).__init__(
             host=host, username=username, port=port)
+        # overwrite the pygerrit ssh client with our own that contains
+        # some fixes
+        self._ssh_client = GerritSSHClient(host, username=username, port=port)
         self._ssh_client.key_filename = key_filename
         self.failed_events = []
         # At this point, we don't have an ssh connection active.

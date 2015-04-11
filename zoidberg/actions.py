@@ -130,7 +130,7 @@ class GitSshAction(Action):
             os.getcwd(), '.tmp_ssh_' + gerrit['host'])
         f = open(filename, 'w')
         f.write("""#!/bin/bash
-        ssh -i %s $@
+        ssh -o StrictHostKeyChecking=no -i %s $@
         """ % gerrit['key_filename'])
         f.close()
         st = os.stat(filename)
