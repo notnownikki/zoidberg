@@ -69,7 +69,17 @@ class Zoidberg(object):
             if self.config_file_has_changed():
                 logging.info(
                     'Reloading configuration from %s' % self.config_filename)
-                self.load_config(self.config_filename)
+                try:
+                    self.load_config(self.config_filename)
+                except configuration.ValidationError:
+                    logging.error(
+                        'Could not reload configuration file, '
+                        'encountered validation errors.')
+                except:
+                    logging.error(
+                        'Could not reload configuration file, '
+                        'please check yaml is valid.')
+
 
     def process_startup_tasks(self):
         # keep track of the tasks that could not be run

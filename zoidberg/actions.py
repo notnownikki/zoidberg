@@ -1,3 +1,4 @@
+import configuration
 import logging
 import os
 import stat
@@ -27,7 +28,7 @@ class ActionRegistry(object):
         return cls._actions.values()
 
 
-class ActionValidationError(Exception):
+class ActionValidationError(configuration.ValidationError):
     pass
 
 

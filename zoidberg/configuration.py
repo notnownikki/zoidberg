@@ -3,6 +3,10 @@ import logging
 import re
 
 
+class ValidationError(Exception):
+    pass
+
+
 class Configuration(object):
     """
     Massages the yaml config into something more easily usable.
