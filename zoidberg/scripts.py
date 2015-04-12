@@ -4,7 +4,7 @@ import zoidberg
 
 
 def main():
-    """Entry point for zoidberg-server."""
+    """Entry point for zoidbergd."""
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', dest='config_file',
                         default='./etc/zoidberg.yaml',
