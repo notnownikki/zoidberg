@@ -145,7 +145,7 @@ class ZoidbergTestCase(testtools.TestCase):
         self._setup_process_loop(1)
         mock_get_event.return_value = False
         mock_config_file_has_changed.return_value = True
-        mock_load_config.side_effect = Exception('Oh dear')
+        mock_load_config.side_effect = Exception('Bad news, everybody!')
         self.zoidberg.process_loop()
         mock_load_config.assert_called_once_with('./tests/etc/zoidberg.yaml')
 
@@ -182,8 +182,7 @@ class ZoidbergTestCase(testtools.TestCase):
     @patch.object(actions.SyncBranchAction, 'startup')
     def test_process_startup_tasks_requeues_failed(self, mock_startup):
         """
-        Queued startup tasks should have their action instantiated
-        and startup called.
+        Queued startup tasks that fail to run should be requeued.
         """
         gerrit_config = self.zoidberg.config.gerrits['master']
         task = gerrit_config['startup'][0]
