@@ -1,7 +1,9 @@
+import logging
 import testtools
 from mock import ANY, Mock, patch
 from weakref import WeakKeyDictionary
-from zoidberg.zoidberg import Zoidberg
+from zoidberg.zoidberg import Zoidberg # woop woop woop
+from zoidberg import actions
 
 
 class CountdownToFalse(object):
@@ -137,8 +139,8 @@ class ZoidbergTestCase(testtools.TestCase):
             mock_enqueue_failed_events, mock_config_file_has_changed,
             mock_load_config):
         """
-        When reloading the config, if there is an exception, this
-        does not crash the process.
+        When reloading the config, if there is an exception, it should
+        not crash the process.
         """
         self._setup_process_loop(1)
         mock_get_event.return_value = False
@@ -146,3 +148,60 @@ class ZoidbergTestCase(testtools.TestCase):
         mock_load_config.side_effect = Exception('Oh dear')
         self.zoidberg.process_loop()
         mock_load_config.assert_called_once_with('./tests/etc/zoidberg.yaml')
+
+    def test_queue_startup_tasks(self):
+        """
+        Gerrit configurations that have startup tasks should
+        get them queued in self.startup_tasks.
+        """
+        gerrit_config = self.zoidberg.config.gerrits['master']
+        self.zoidberg.queue_startup_tasks(gerrit_config)
+        self.assertEqual(1, self.zoidberg.startup_tasks.qsize())
+        task = self.zoidberg.startup_tasks.get()
+        self.assertEqual(
+            {'task': gerrit_config['startup'][0], 'source': gerrit_config},
+            task)
+
+    @patch.object(actions.SyncBranchAction, 'startup')
+    def test_process_startup_tasks(self, mock_startup):
+        """
+        Queued startup tasks should have their action instantiated
+        and startup called.
+        """
+        gerrit_config = self.zoidberg.config.gerrits['master']
+        task = gerrit_config['startup'][0]
+        mock_startup.return_value = True
+        self.zoidberg.queue_startup_tasks(gerrit_config)
+        self.zoidberg.process_startup_tasks()
+        mock_startup.assert_called_once_with(
+            self.zoidberg.config, task, gerrit_config)
+        self.assertEqual(
+            0,
+            self.zoidberg.startup_tasks.qsize())
+
+    @patch.object(actions.SyncBranchAction, 'startup')
+    def test_process_startup_tasks_requeues_failed(self, mock_startup):
+        """
+        Queued startup tasks should have their action instantiated
+        and startup called.
+        """
+        gerrit_config = self.zoidberg.config.gerrits['master']
+        task = gerrit_config['startup'][0]
+        mock_startup.return_value = False
+        self.zoidberg.queue_startup_tasks(gerrit_config)
+        self.zoidberg.process_startup_tasks()
+        self.assertEqual(
+            1,
+            self.zoidberg.startup_tasks.qsize())
+        self.assertEqual(
+            {'task': task, 'source': gerrit_config},
+            self.zoidberg.startup_tasks.get())
+
+
+# TODO: connect_client
+# TODO: validate_actions
+# TODO: process_event
+# TODO: get_client
+# TODO: load_config
+# TODO: run_action
+# TODO: Action#validate_config
