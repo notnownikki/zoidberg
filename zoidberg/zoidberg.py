@@ -34,22 +34,27 @@ class Zoidberg(object):
         self.config = None
         self.load_config(config_file)
         self.startup_tasks = Queue()
+        self.running = True
 
     def run(self):
         try:
             self.process_loop()
         except KeyboardInterrupt:
-            # TODO: respond to SIGTERM and clean up nicely
-            for gerrit_name in self.config.gerrits:
-                logging.info('Shutting down stream for %s' % gerrit_name)
-                self.config.gerrits[gerrit_name]['client'].stop_event_stream()
-                logging.info('Shut down stream for %s' % gerrit_name)
+            pass
+
+        for gerrit_name in self.config.gerrits:
+            logging.info('Shutting down stream for %s' % gerrit_name)
+            self.config.gerrits[gerrit_name]['client'].stop_event_stream()
+            logging.info('Shut down stream for %s' % gerrit_name)
 
     def process_loop(self):
-        while True:
+        # TODO: respond to SIGTERM and clean up nicely
+        while self.running:
             # process any startup tasks
             self.process_startup_tasks()
-            for gerrit_name in self.config.gerrits:
+            gerrit_names = self.config.gerrits.keys()
+            gerrit_names.sort()
+            for gerrit_name in gerrit_names:
                 logging.debug('Polling %s for events' % gerrit_name)
 
                 # most things are based around these blocks of configuration
@@ -60,11 +65,11 @@ class Zoidberg(object):
                 # any failed actions due to connection issues get requeued
                 self.enqueue_failed_events(gerrit_cfg)
 
-                event = self.get_event(gerrit_cfg, timeout=1)
+                event = self.get_event(gerrit_cfg, timeout=0.1)
 
                 while event:
                     self.process_event(event, gerrit_cfg)
-                    event = self.get_event(gerrit_cfg, timeout=1)
+                    event = self.get_event(gerrit_cfg, timeout=0.1)
 
             if self.config_file_has_changed():
                 logging.info(
