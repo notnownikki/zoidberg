@@ -146,8 +146,8 @@ the action.
 Run zoidberg
 ------------
 
-  $> zoidberg-server -c /path/to/zoidberg.yaml
+  $> zoidbergd -c /path/to/zoidberg.yaml
 
 To run in debug mode and see a whole bunch of output:
 
-  $> zoidberg-server -c /path/to/zoidberg.yaml -v
+  $> zoidbergd -c /path/to/zoidberg.yaml -v
