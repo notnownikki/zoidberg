@@ -24,6 +24,7 @@ import actions
 import logging
 import os
 import pygerrit
+import signal
 import yaml
 import configuration
 from Queue import Queue
@@ -227,3 +228,7 @@ class Zoidberg(object):
     def get_event(self, gerrit_cfg, timeout=1):
         client = self.get_client(gerrit_cfg)
         return client.get_event(timeout=timeout)
+
+    def handle_signal(self, signum, frame):
+        if signum == signal.SIGTERM:
+            self.running = False

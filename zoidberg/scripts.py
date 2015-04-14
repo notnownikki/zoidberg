@@ -1,5 +1,6 @@
 import argparse
 import logging
+import signal
 import zoidberg
 
 
@@ -21,5 +22,6 @@ def main():
     logging.basicConfig(
         format='%(asctime)s %(levelname)s %(message)s', level=log_level)
 
-    server = zoidberg.Zoidberg(options.config_file)
-    server.run()
+    zoidbergd = zoidberg.Zoidberg(options.config_file)
+    signal.signal(signal.SIGTERM, zoidbergd.handle_signal)
+    zoidbergd.run()
