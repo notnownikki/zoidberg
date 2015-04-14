@@ -1,0 +1,11 @@
+- gerrits:
+  - master:
+      host: localhost
+      key_filename: some/key
+      username: master_user
+      project-pattern: .*
+      events:
+      - type: ref-updated
+        action: zoidberg.SyncBranch
+        branch-pattern: ^master$
+        target: invalid_target

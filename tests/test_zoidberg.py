@@ -1,9 +1,13 @@
 import logging
+import os
+import pygerrit
 import testtools
+import yaml
 from mock import ANY, Mock, patch
 from weakref import WeakKeyDictionary
 from zoidberg.zoidberg import Zoidberg # woop woop woop
 from zoidberg import actions
+from zoidberg import configuration
 
 
 class CountdownToFalse(object):
@@ -128,27 +132,6 @@ class ZoidbergTestCase(testtools.TestCase):
         self.zoidberg.process_loop()
         mock_load_config.assert_called_once_with('./tests/etc/zoidberg.yaml')
 
-    @patch.object(TestableZoidberg, 'load_config')
-    @patch.object(TestableZoidberg, 'config_file_has_changed')
-    @patch.object(TestableZoidberg, 'enqueue_failed_events')
-    @patch.object(TestableZoidberg, 'process_event')
-    @patch.object(TestableZoidberg, 'get_event')
-    @patch.object(TestableZoidberg ,'process_startup_tasks')
-    def test_process_loop_handles_config_exceptions(
-            self, mock_pst, mock_get_event, mock_process_event,
-            mock_enqueue_failed_events, mock_config_file_has_changed,
-            mock_load_config):
-        """
-        When reloading the config, if there is an exception, it should
-        not crash the process.
-        """
-        self._setup_process_loop(1)
-        mock_get_event.return_value = False
-        mock_config_file_has_changed.return_value = True
-        mock_load_config.side_effect = Exception('Bad news, everybody!')
-        self.zoidberg.process_loop()
-        mock_load_config.assert_called_once_with('./tests/etc/zoidberg.yaml')
-
     def test_queue_startup_tasks(self):
         """
         Gerrit configurations that have startup tasks should
@@ -196,11 +179,75 @@ class ZoidbergTestCase(testtools.TestCase):
             {'task': task, 'source': gerrit_config},
             self.zoidberg.startup_tasks.get())
 
+    @patch.object(TestableZoidberg ,'queue_startup_tasks')
+    def test_connect_client(self, mock_queue_startup_tasks):
+        """
+        connect_client should use the details in a gerrit config
+        block to activate the ssh client, start the gerrit event
+        stream, and queue startup tasks, if the client if not
+        already active.
+        """
+        gerrit_cfg = self.zoidberg.config.gerrits['master']
+        mock_client = Mock()
+        gerrit_cfg['client'] = mock_client
+        mock_client.is_active.return_value = False
+        self.zoidberg.connect_client(gerrit_cfg)
+        mock_client.activate_ssh.assert_called_once_with(
+            gerrit_cfg['host'], gerrit_cfg['username'],
+            gerrit_cfg['key_filename'], 29418)
+        mock_client.start_event_stream.assert_called_once()
+        mock_queue_startup_tasks.assert_called_once_with(gerrit_cfg)
 
-# TODO: connect_client
-# TODO: validate_actions
+    @patch.object(TestableZoidberg ,'queue_startup_tasks')
+    def test_connect_client_already_active(self, mock_queue_startup_tasks):
+        """
+        connect_client should not make any calls on the client to activate
+        it, if it's already active.
+        """
+        gerrit_cfg = self.zoidberg.config.gerrits['master']
+        mock_client = Mock()
+        gerrit_cfg['client'] = mock_client
+        mock_client.is_active.return_value = True
+        self.zoidberg.connect_client(gerrit_cfg)
+        self.assertEqual(0, mock_client.activate_ssh.call_count)
+        self.assertEqual(0, mock_client.start_event_stream.call_count)
+        self.assertEqual(0, mock_queue_startup_tasks.call_count)
+
+    @patch.object(TestableZoidberg ,'queue_startup_tasks')
+    def test_connect_client_pygerrit_error(self, mock_queue_startup_tasks):
+        """
+        pygerrit will raise an exception if the ssh client fails to
+        connect, that should be silently discarded by connect_client
+        so that we can try again next time we try to connect_client.
+        """
+        gerrit_cfg = self.zoidberg.config.gerrits['master']
+        mock_client = Mock()
+        gerrit_cfg['client'] = mock_client
+        mock_client.is_active.return_value = False
+        mock_client.activate_ssh.side_effect = pygerrit.error.GerritError(
+            'SSH Connnection Failed')
+        self.zoidberg.connect_client(gerrit_cfg)
+        self.assertEqual(1, mock_client.activate_ssh.call_count)
+        self.assertEqual(0, mock_client.start_event_stream.call_count)
+        self.assertEqual(0, mock_queue_startup_tasks.call_count)
+
+    def test_invalid_configurations(self):
+        """
+        Check each of the invalid configurations does not got loaded and replace
+        the existing configuration.
+        """
+        invalid_dir = './tests/etc/invalid/'
+        configs = os.listdir(invalid_dir)
+        existing_config = self.zoidberg.config
+        for config_file in configs:
+            try:
+                self.zoidberg.load_config(
+                    os.path.join(invalid_dir, config_file))
+            except:
+                pass
+            self.assertEqual(existing_config, self.zoidberg.config)
+
+
 # TODO: process_event
 # TODO: get_client
-# TODO: load_config
 # TODO: run_action
-# TODO: Action#validate_config

@@ -32,7 +32,7 @@ from Queue import Queue
 class Zoidberg(object):
     def __init__(self, config_file):
         self.config = None
-        self.load_config(config_file)
+        self.load_config(config_file, raise_exception=True)
         self.startup_tasks = Queue()
         self.running = True
 
@@ -74,17 +74,7 @@ class Zoidberg(object):
             if self.config_file_has_changed():
                 logging.info(
                     'Reloading configuration from %s' % self.config_filename)
-                try:
-                    self.load_config(self.config_filename)
-                except configuration.ValidationError:
-                    logging.error(
-                        'Could not reload configuration file, '
-                        'encountered validation errors.')
-                except:
-                    logging.error(
-                        'Could not reload configuration file, '
-                        'please check yaml is valid.')
-
+                self.load_config(self.config_filename)
 
     def process_startup_tasks(self):
         # keep track of the tasks that could not be run
@@ -125,29 +115,36 @@ class Zoidberg(object):
             event=event, cfg=self.config, action_cfg=action_cfg,
             source=gerrit_cfg)
 
-    def load_config(self, config_file):
-        config_from_yaml = yaml.load(open(config_file, 'r'))
-        config = configuration.Configuration(config_from_yaml)
-        self.validate_actions(config)
-        self.config_filename = config_file
-        self.config_mtime = os.stat(config_file).st_mtime
+    def load_config(self, config_file, raise_exception=False):
+        try:
+            config_from_yaml = yaml.load(open(config_file, 'r'))
+            config = configuration.Configuration(config_from_yaml)
+            self.validate_config(config)
+            self.config_filename = config_file
+            self.config_mtime = os.stat(config_file).st_mtime
 
-        # move clients from old config if they have the same connection
-        if self.config is not None:
-            for gerrit_name in config.gerrits:
-                client = config.gerrits[gerrit_name]['client']
-                old_client = self.config.gerrits[gerrit_name]['client']
+            # move clients from old config if they have the same connection
+            if self.config is not None:
+                for gerrit_name in config.gerrits:
+                    client = config.gerrits[gerrit_name]['client']
+                    old_client = self.config.gerrits[gerrit_name]['client']
 
-                if old_client == client:
-                    logging.debug('Reusing client for %s' % gerrit_name)
-                    config.gerrits[gerrit_name]['client'] = old_client
-                    self.config.gerrits[gerrit_name]['client'] = None
+                    if old_client == client:
+                        logging.debug('Reusing client for %s' % gerrit_name)
+                        config.gerrits[gerrit_name]['client'] = old_client
+                        self.config.gerrits[gerrit_name]['client'] = None
 
-            self.config.close_clients()
+                self.config.close_clients()
+        except Exception, e:
+            logging.error(
+                'Could not load configuration file, '
+                'encountered errors : ' + e.message)
+            if raise_exception:
+                raise e
 
         self.config = config
 
-    def validate_actions(self, config):
+    def validate_config(self, config):
         # TODO: verify startup tasks here too
         for gerrit_name in config.gerrits:
             gerrit_config = config.gerrits.get(gerrit_name)
