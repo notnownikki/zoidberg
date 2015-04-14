@@ -233,8 +233,8 @@ class ZoidbergTestCase(testtools.TestCase):
 
     def test_invalid_configurations(self):
         """
-        Check each of the invalid configurations does not got loaded and replace
-        the existing configuration.
+        Check each of the invalid configurations does not got loaded and
+        replace the existing configuration.
         """
         invalid_dir = './tests/etc/invalid/'
         configs = os.listdir(invalid_dir)
@@ -245,7 +245,14 @@ class ZoidbergTestCase(testtools.TestCase):
             self.assertEqual(
                 existing_config, self.zoidberg.config, config_file)
 
-
-# TODO: process_event
-# TODO: get_client
-# TODO: run_action
+    @patch.object(TestableZoidberg, 'connect_client')
+    def test_get_client_connects_client_if_not_active(
+            self, mock_connect_client):
+        """If the client is not active, have connect_client connect it."""
+        mock_client = Mock()
+        gerrit_cfg = self.zoidberg.config.gerrits['master']
+        gerrit_cfg['client'] = mock_client
+        mock_client.is_active.return_value = False
+        self.zoidberg.get_client(gerrit_cfg)
+        self.assertEqual(1, mock_client.is_active.call_count)
+        mock_connect_client.assert_called_once_with(gerrit_cfg)

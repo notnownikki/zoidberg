@@ -136,7 +136,7 @@ class Zoidberg(object):
 
                 self.config.close_clients()
             self.config = config
-        except Exception, e:
+        except Exception as e:
             logging.error(
                 'Could not load configuration file, '
                 'encountered errors : ' + e.message)
