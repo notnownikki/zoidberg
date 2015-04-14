@@ -240,12 +240,10 @@ class ZoidbergTestCase(testtools.TestCase):
         configs = os.listdir(invalid_dir)
         existing_config = self.zoidberg.config
         for config_file in configs:
-            try:
-                self.zoidberg.load_config(
-                    os.path.join(invalid_dir, config_file))
-            except:
-                pass
-            self.assertEqual(existing_config, self.zoidberg.config)
+            self.zoidberg.load_config(
+                os.path.join(invalid_dir, config_file))
+            self.assertEqual(
+                existing_config, self.zoidberg.config, config_file)
 
 
 # TODO: process_event

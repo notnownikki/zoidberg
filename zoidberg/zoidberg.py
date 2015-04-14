@@ -135,14 +135,13 @@ class Zoidberg(object):
                         self.config.gerrits[gerrit_name]['client'] = None
 
                 self.config.close_clients()
+            self.config = config
         except Exception, e:
             logging.error(
                 'Could not load configuration file, '
                 'encountered errors : ' + e.message)
             if raise_exception:
                 raise e
-
-        self.config = config
 
     def validate_config(self, config):
         # TODO: verify startup tasks here too
