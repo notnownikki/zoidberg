@@ -20,3 +20,4 @@
       username: thirdparty_user
       project-pattern: .*
       events: []
+- plugins: [tests.thirdpartyactions, tests.moreactions]

@@ -21,6 +21,7 @@
 #                                '!!!!!!!!!!!!!!!!!!!!!!!M
 #                                J!!!!!!!!!!!!!!!!!!!!!!!F K!%n.
 import actions
+import importlib
 import logging
 import os
 import pygerrit
@@ -34,6 +35,9 @@ class Zoidberg(object):
     def __init__(self, config_file):
         self.config = None
         self.load_config(config_file, raise_exception=True)
+        for module_name in self.config.plugins:
+            action_module = '%s.actions' % module_name
+            importlib.import_module(action_module)
         self.startup_tasks = Queue()
         self.running = True
 

@@ -256,3 +256,14 @@ class ZoidbergTestCase(testtools.TestCase):
         self.zoidberg.get_client(gerrit_cfg)
         self.assertEqual(1, mock_client.is_active.call_count)
         mock_connect_client.assert_called_once_with(gerrit_cfg)
+
+    def test_plugins_loaded(self):
+        """
+        Plugins listed in the configuration have their actions registered.
+        """
+        action = actions.ActionRegistry.get(
+            'thirdpartyactions.AnExcellentAction')
+        self.assertTrue(issubclass(action, actions.Action))
+        action = actions.ActionRegistry.get(
+            'moreactions.JustSomeActionOrOther')
+        self.assertTrue(issubclass(action, actions.Action))

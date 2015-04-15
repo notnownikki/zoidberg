@@ -1,8 +1,8 @@
-import configuration
 import logging
 import os
 import stat
 import subprocess
+from exceptions import ActionValidationError
 
 
 class ActionRegistry(object):
@@ -26,10 +26,6 @@ class ActionRegistry(object):
     @classmethod
     def get_all(cls):
         return cls._actions.values()
-
-
-class ActionValidationError(configuration.ValidationError):
-    pass
 
 
 class Action(object):

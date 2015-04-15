@@ -3,10 +3,6 @@ import logging
 import re
 
 
-class ValidationError(Exception):
-    pass
-
-
 class Configuration(object):
     """
     Massages the yaml config into something more easily usable.
@@ -31,7 +27,8 @@ class Configuration(object):
     """
     def __init__(self, cfg):
         self.gerrits = {}
-        for gerrit in cfg[0]['gerrits']:
+        gerrit_configs = self.get_section(cfg, 'gerrits', [])
+        for gerrit in gerrit_configs:
             name = gerrit.keys()[0]
             self.gerrits[name] = {
                 'name': name,
@@ -74,6 +71,14 @@ class Configuration(object):
                     event['branch_re'] = re.compile(event['branch-pattern'])
 
                 self.gerrits[name]['events'][event_type].append(event.copy())
+
+        self.plugins = self.get_section(cfg, 'plugins', [])
+
+    def get_section(self, cfg, name, default):
+        for section in cfg:
+            if name == section.keys()[0]:
+                return section[name]
+        return default
 
     def close_clients(self):
         """Closes the client connections for all clients in this config."""
