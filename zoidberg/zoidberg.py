@@ -70,11 +70,11 @@ class Zoidberg(object):
                 # any failed actions due to connection issues get requeued
                 self.enqueue_failed_events(gerrit_cfg)
 
-                event = self.get_event(gerrit_cfg, timeout=0.1)
+                event = self.get_event(gerrit_cfg, timeout=0.5)
 
                 while event:
                     self.process_event(event, gerrit_cfg)
-                    event = self.get_event(gerrit_cfg, timeout=0.1)
+                    event = self.get_event(gerrit_cfg, timeout=0.5)
 
             if self.config_file_has_changed():
                 logging.info(
@@ -88,7 +88,7 @@ class Zoidberg(object):
 
         while not self.startup_tasks.empty():
             task = self.startup_tasks.get(block=False)
-            logging.debug(
+            logging.info(
                 'Running startup task %s for %s'
                 % (task['task']['action'], task['source']['name']))
 
