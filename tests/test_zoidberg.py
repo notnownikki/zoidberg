@@ -195,7 +195,7 @@ class ZoidbergTestCase(testtools.TestCase):
         mock_client.activate_ssh.assert_called_once_with(
             gerrit_cfg['host'], gerrit_cfg['username'],
             gerrit_cfg['key_filename'], 29418)
-        mock_client.start_event_stream.assert_called_once()
+        self.assertEqual(1, mock_client.start_event_stream.call_count)
         mock_queue_startup_tasks.assert_called_once_with(gerrit_cfg)
 
     @patch.object(TestableZoidberg ,'queue_startup_tasks')
