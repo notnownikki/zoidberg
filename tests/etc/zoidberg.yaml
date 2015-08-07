@@ -19,5 +19,10 @@
       key_filename: some/other/key
       username: thirdparty_user
       project-pattern: .*
-      events: []
+      events:
+      - type: ref-updated
+        action: thirdpartyactions.AnExcellentAction
+        branch-pattern: ^master$
+        target: master
+
 - plugins: [tests.thirdpartyactions, tests.moreactions]

@@ -15,7 +15,7 @@ class CountdownToFalse(object):
     def __init__(self, default):
         self.default = default
         self.data = WeakKeyDictionary()
-        
+
     def __get__(self, instance, owner):
         countdown = self.data.get(instance, self.default)
         if countdown > 0:
@@ -23,7 +23,7 @@ class CountdownToFalse(object):
             self.data[instance] = countdown
             return True
         return False
-    
+
     def __set__(self, instance, value):
         if not value:
             # make sure we're False
@@ -266,4 +266,15 @@ class ZoidbergTestCase(testtools.TestCase):
         self.assertTrue(issubclass(action, actions.Action))
         action = actions.ActionRegistry.get(
             'moreactions.JustSomeActionOrOther')
+        self.assertTrue(issubclass(action, actions.Action))
+
+    def test_configuration_with_plugin_action(self):
+        """
+        Check that a third party plugin is properly loaded from configuration.
+        """
+        config = self.zoidberg.config
+        gerrit_config = config.gerrits.get('thirdparty')
+        event_type = gerrit_config['events']['ref-updated']
+        action = actions.ActionRegistry.get(
+            'thirdpartyactions.AnExcellentAction')
         self.assertTrue(issubclass(action, actions.Action))
