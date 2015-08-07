@@ -35,9 +35,6 @@ class Zoidberg(object):
     def __init__(self, config_file):
         self.config = None
         self.load_config(config_file, raise_exception=True)
-        for module_name in self.config.plugins:
-            action_module = '%s.actions' % module_name
-            importlib.import_module(action_module)
         self.startup_tasks = Queue()
         self.running = True
 
@@ -124,6 +121,9 @@ class Zoidberg(object):
         try:
             config_from_yaml = yaml.load(open(config_file, 'r'))
             config = configuration.Configuration(config_from_yaml)
+            for module_name in config.plugins:
+                action_module = '%s.actions' % module_name
+                importlib.import_module(action_module)
             self.validate_config(config)
             self.config_filename = config_file
             self.config_mtime = os.stat(config_file).st_mtime
