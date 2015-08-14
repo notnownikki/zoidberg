@@ -24,8 +24,8 @@ import actions
 import importlib
 import logging
 import os
-import pygerrit
 import signal
+import socket
 import yaml
 import configuration
 from Queue import Queue
@@ -46,11 +46,10 @@ class Zoidberg(object):
 
         for gerrit_name in self.config.gerrits:
             logging.info('Shutting down stream for %s' % gerrit_name)
-            self.config.gerrits[gerrit_name]['client'].stop_event_stream()
+            self.config.gerrits[gerrit_name]['client'].shutdown()
             logging.info('Shut down stream for %s' % gerrit_name)
 
     def process_loop(self):
-        # TODO: respond to SIGTERM and clean up nicely
         while self.running:
             # process any startup tasks
             self.process_startup_tasks()
@@ -67,11 +66,16 @@ class Zoidberg(object):
                 # any failed actions due to connection issues get requeued
                 self.enqueue_failed_events(gerrit_cfg)
 
-                event = self.get_event(gerrit_cfg, timeout=0.5)
+                event = self.get_event(gerrit_cfg, timeout=1)
 
                 while event:
-                    self.process_event(event, gerrit_cfg)
-                    event = self.get_event(gerrit_cfg, timeout=0.5)
+                    try:
+                        self.process_event(event, gerrit_cfg)
+                    except Exception, e:
+                        logging.critical('Internal error processing event:')
+                        logging.critical(repr(event))
+                        logging.critical(repr(e))
+                    event = self.get_event(gerrit_cfg, timeout=1)
 
             if self.config_file_has_changed():
                 logging.info(
@@ -117,6 +121,25 @@ class Zoidberg(object):
             event=event, cfg=self.config, action_cfg=action_cfg,
             source=gerrit_cfg)
 
+    def config_connection_is_equal(self, client, config_block):
+        """
+        Checks if a connected client has the same connection details as
+        a configuration block for a gerrit.
+        """
+        return (
+            config_block['host'] == getattr(
+                client, 'hostname', None)
+            and
+            config_block['username'] == getattr(
+                client, 'username', None)
+            and
+            config_block['key_filename'] == getattr(
+                client, 'key_filename', None)
+            and
+            config_block.get('port', 29418) == getattr(
+                client, 'port', None)
+            )
+
     def load_config(self, config_file, raise_exception=False):
         try:
             config_from_yaml = yaml.load(open(config_file, 'r'))
@@ -131,11 +154,10 @@ class Zoidberg(object):
             # move clients from old config if they have the same connection
             if self.config is not None:
                 for gerrit_name in config.gerrits:
-                    client = config.gerrits[gerrit_name]['client']
                     old_client = self.config.gerrits[gerrit_name]['client']
-
-                    if old_client == client:
-                        logging.debug('Reusing client for %s' % gerrit_name)
+                    if self.config_connection_is_equal(
+                            old_client, config.gerrits[gerrit_name]):
+                        logging.info('Reusing client for %s' % gerrit_name)
                         config.gerrits[gerrit_name]['client'] = old_client
                         self.config.gerrits[gerrit_name]['client'] = None
 
@@ -169,17 +191,18 @@ class Zoidberg(object):
             try:
                 # activate the client's ssh and start streaming events
                 if not client.is_active():
-                    client.activate_ssh(host, username, key_filename, port)
-                    client.start_event_stream()
+                    client.activate_ssh(
+                        hostname=host, username=username,
+                        key_filename=key_filename, port=port)
                     # queue any tasks that need to be run on connection
                     self.queue_startup_tasks(gerrit_config)
-            except pygerrit.error.GerritError:
-                # if there's an error, log it and we'll try later
+            except socket.error, e:
+                # if there's a connection error, log it and we'll try later
                 # we can do this because get_client tries to connect
                 # if you get a client that is not connected
                 logging.error(
-                    'Could not connect to %s at %s'
-                    % (name, host))
+                    'Could not connect to %s at %s (%s)'
+                    % (name, host, repr(e)))
 
     def queue_startup_tasks(self, gerrit_config):
         if 'startup' in gerrit_config and gerrit_config['startup']:
@@ -198,8 +221,8 @@ class Zoidberg(object):
         # deal with the different event structures
         if hasattr(event, 'change'):
             project = event.change.project
-        elif hasattr(event, 'ref_update'):
-            project = event.ref_update.project
+        elif hasattr(event, 'refUpdate'):
+            project = event.refUpdate.project
 
         if project is None:
             # no project? not much we can do!
@@ -207,8 +230,8 @@ class Zoidberg(object):
 
         # only run for projects we're interested in
         if gerrit_cfg['project_re'].match(project):
-            if event.name in gerrit_cfg['events']:
-                for action_cfg in gerrit_cfg['events'][event.name]:
+            if event.type in gerrit_cfg['events']:
+                for action_cfg in gerrit_cfg['events'][event.type]:
                     self.run_action(action_cfg, event, gerrit_cfg)
 
     def config_file_has_changed(self):
@@ -219,7 +242,7 @@ class Zoidberg(object):
         if not client.is_active():
             # this allows us to lazily connect clients, and reconnect if
             # a gerrit goes down for whatever reason
-            logging.info(
+            logging.error(
                 'Client for %s was not active, trying to connect...'
                 % gerrit_cfg['name'])
             self.connect_client(gerrit_cfg)

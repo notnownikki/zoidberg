@@ -1,6 +1,6 @@
 import logging
 import os
-import pygerrit
+import socket
 import testtools
 import yaml
 from mock import ANY, Mock, patch
@@ -193,9 +193,8 @@ class ZoidbergTestCase(testtools.TestCase):
         mock_client.is_active.return_value = False
         self.zoidberg.connect_client(gerrit_cfg)
         mock_client.activate_ssh.assert_called_once_with(
-            gerrit_cfg['host'], gerrit_cfg['username'],
-            gerrit_cfg['key_filename'], 29418)
-        self.assertEqual(1, mock_client.start_event_stream.call_count)
+            hostname=gerrit_cfg['host'], username=gerrit_cfg['username'],
+            key_filename=gerrit_cfg['key_filename'], port=29418)
         mock_queue_startup_tasks.assert_called_once_with(gerrit_cfg)
 
     @patch.object(TestableZoidberg ,'queue_startup_tasks')
@@ -214,24 +213,23 @@ class ZoidbergTestCase(testtools.TestCase):
         self.assertEqual(0, mock_queue_startup_tasks.call_count)
 
     @patch.object(TestableZoidberg ,'queue_startup_tasks')
-    def test_connect_client_pygerrit_error(self, mock_queue_startup_tasks):
+    def test_connect_client_error(self, mock_queue_startup_tasks):
         """
-        pygerrit will raise an exception if the ssh client fails to
-        connect, that should be silently discarded by connect_client
-        so that we can try again next time we try to connect_client.
+        If we get a socket error when connecting, that should be silently
+        discarded by connect_client so that we can try again next time we try
+        to connect_client.
         """
         gerrit_cfg = self.zoidberg.config.gerrits['master']
         mock_client = Mock()
         gerrit_cfg['client'] = mock_client
         mock_client.is_active.return_value = False
-        mock_client.activate_ssh.side_effect = pygerrit.error.GerritError(
-            'SSH Connnection Failed')
+        mock_client.activate_ssh.side_effect = socket.error('SSH Connnection Failed')
         self.zoidberg.connect_client(gerrit_cfg)
         self.assertEqual(1, mock_client.activate_ssh.call_count)
-        self.assertEqual(0, mock_client.start_event_stream.call_count)
         self.assertEqual(0, mock_queue_startup_tasks.call_count)
 
-    def test_invalid_configurations(self):
+    @patch.object(TestableZoidberg ,'connect_client')
+    def test_invalid_configurations(self, mock_connect_client):
         """
         Check each of the invalid configurations does not got loaded and
         replace the existing configuration.
@@ -278,3 +276,45 @@ class ZoidbergTestCase(testtools.TestCase):
         action = actions.ActionRegistry.get(
             'thirdpartyactions.AnExcellentAction')
         self.assertTrue(issubclass(action, actions.Action))
+
+    @patch.object(TestableZoidberg, 'load_config')
+    @patch.object(TestableZoidberg, 'config_file_has_changed')
+    @patch.object(TestableZoidberg, 'enqueue_failed_events')
+    @patch.object(TestableZoidberg, 'process_event')
+    @patch.object(TestableZoidberg, 'get_event')
+    @patch.object(TestableZoidberg ,'process_startup_tasks')
+    def test_faulty_processing_does_not_crash_zoidberg(
+            self, mock_pst, mock_get_event, mock_process_event,
+            mock_enqueue_failed_events, mock_config_file_has_changed,
+            mock_load_config):
+        """
+        Each processing loop should get an event for the gerrit
+        and if an event is returned, pass it to process_event.
+        """
+        self._setup_process_loop(1)
+        mock_get_event.side_effect = ['Event', False, False]
+        mock_process_event.side_effect = Exception('Boom!')
+        self.zoidberg.process_loop()
+
+    @patch.object(configuration.Configuration, 'close_clients')
+    def test_reloading_config_reuses_client(self, mock_close_clients):
+        """
+        When reloading config, clients will be reused if the
+        connection details are the same.
+        """
+        # load a config with a client and connect it
+        self.zoidberg.load_config('./tests/etc/zoidberg.yaml')
+        client = self.zoidberg.config.gerrits['master']['client']
+        self.zoidberg.connect_client(self.zoidberg.config.gerrits['master'])
+        client.marker = 'CheckForThisMarker'
+        # reload the same config
+        self.zoidberg.load_config('./tests/etc/zoidberg.yaml')
+        # check the client has not changed
+        client = self.zoidberg.config.gerrits['master']['client']
+        self.assertEqual('CheckForThisMarker', client.marker)
+
+        # reload config with different connection details
+        self.zoidberg.load_config('./tests/etc/zoidberg2.yaml')
+        # check the client has changed
+        client = self.zoidberg.config.gerrits['master']['client']
+        self.assertEqual(None, getattr(client, 'marker', None))

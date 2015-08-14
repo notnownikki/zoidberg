@@ -1,5 +1,5 @@
 pycrypto>=2.6
-pygerrit
+paramiko
 PyYAML
 pbr>=0.5.21,<1.0
 
