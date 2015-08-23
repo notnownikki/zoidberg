@@ -1,6 +1,6 @@
-from gerrit import GerritClient
 import logging
 import re
+from .gerrit import GerritClient
 
 
 class Configuration(object):
@@ -46,18 +46,11 @@ class Configuration(object):
 
             self.gerrits[name]['events'] = {}
 
-            # client connection details
-            username = self.gerrits[name].get('username')
-            host = self.gerrits[name].get('host')
-            key_filename = self.gerrits[name].get('key_filename')
-            name = self.gerrits[name].get('name')
-            port = self.gerrits[name].get('port', 29418)
             # this is the only time we construct a new GerritClient
             # the client does not have an active ssh connection at
-            # this point
-            self.gerrits[name]['client'] = GerritClient(
-                username=username, host=host, key_filename=key_filename,
-                port=port)
+            # this point. Connection details are supplied when
+            # zoidberg calls activate_ssh
+            self.gerrits[name]['client'] = GerritClient()
 
             # create a list of actions for each event type
             for event in gerrit[name]['events']:

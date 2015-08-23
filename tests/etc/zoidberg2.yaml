@@ -1,7 +1,7 @@
 - gerrits:
   - master:
       host: localhost
-      key_filename: some/key
+      key_filename: some/other/key
       username: master_user
       project-pattern: .*
       events:

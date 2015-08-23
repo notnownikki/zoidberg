@@ -95,8 +95,8 @@ class Action(object):
             branch = None
             if hasattr(event, 'change'):
                 branch = event.change.branch
-            elif hasattr(event, 'ref_update'):
-                branch = event.ref_update.refname
+            elif hasattr(event, 'refUpdate'):
+                branch = event.refUpdate.refname
 
             if not action_cfg['branch_re'].match(branch):
                 # not interested in events for this branch!
@@ -209,8 +209,8 @@ class SyncBranchAction(GitSshAction):
 
     def _do_run(self, event, cfg, action_cfg, source):
         target = cfg.gerrits[action_cfg['target']]
-        branch = event.ref_update.refname
-        project = event.ref_update.project
+        branch = event.refUpdate.refname
+        project = event.refUpdate.project
 
         self.push_branch_to_target(source, target, project, branch)
 
@@ -229,7 +229,7 @@ class SyncReviewCodeAction(GitSshAction):
         branch = event.change.branch
         project = event.change.project
         ref = event.patchset.ref
-        topic = event.change.topic
+        topic = getattr(event.change, 'topic', 'no-topic')
 
         self.git(
             'clone', gerrit=source, project=project, branch=branch)
@@ -252,13 +252,13 @@ class PropagateCommentAction(Action):
 
         # construct the message header and look at the incoming
         # message for our propagation header structure
-        incoming_comment_header = event.comment.split('\n')[0]
+        incoming_comment_header = event.comment.split('--------')[0]
         user_header = '%s (%s)' % (event.author.name, event.author.email)
-        message_header = '%s - (%s gerrit)' % (user_header, source['name'])
-        if incoming_comment_header.startswith(user_header):
-            if incoming_comment_header.endswith('gerrit)'):
-                # don't repost if this is a propagated comment already
-                return
+        message_header = 'X-FROM-GERRIT: %s - (%s gerrit)' % (
+            user_header, source['name'])
+
+        if 'X-FROM-GERRIT' in incoming_comment_header:
+            return
 
         # prepare the message
         message = u'%s\n\n--------\n\n%s' % (message_header, event.comment)
