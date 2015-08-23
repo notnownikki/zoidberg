@@ -1,8 +1,8 @@
 Metadata-Version: 1.1
 Name: zoidberg
-Version: 0.1
+Version: 0.2
 Summary: Generic gerrit event and response tool
-Home-page: http://github.org/notnownikki/zoidberg
+Home-page: http://github.org/gozerhp/zoidberg
 Author: Nicola Heald
 Author-email: nicola@notnowlewis.com
 License: UNKNOWN
